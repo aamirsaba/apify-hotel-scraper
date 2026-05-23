@@ -3,6 +3,12 @@ import { PuppeteerCrawler } from 'crawlee';
 
 await Actor.init();
 
+// Create proxy configuration with residential proxies
+const proxyConfiguration = await Actor.createProxyConfiguration({
+    groups: ['RESIDENTIAL'],  // Use residential proxies to avoid blocking
+    useApifyProxy: true,
+});
+
 const input = await Actor.getInput();
 const city = input?.city || 'Muscat';
 const checkin = input?.checkin || '2026-06-01';
@@ -14,12 +20,16 @@ const searchUrl = `https://www.booking.com/searchresults.html?ss=${encodeURIComp
 console.log(`🔍 Searching hotels in ${city}`);
 
 const crawler = new PuppeteerCrawler({
+    proxyConfiguration,  // Add this line - CRITICAL!
     maxRequestsPerCrawl: 1,
     
     requestHandler: async ({ page, request }) => {
         console.log(`📄 Loading page...`);
         
         await page.goto(request.url, { waitUntil: 'networkidle2', timeout: 60000 });
+        
+        // Random delay to avoid detection
+        await new Promise(resolve => setTimeout(resolve, 2000));
         
         // Wait for results
         await page.waitForSelector('[data-testid="property-card"]', { timeout: 30000 });
@@ -33,9 +43,8 @@ const crawler = new PuppeteerCrawler({
                 const name = nameEl ? nameEl.innerText.trim() : '';
                 if (!name) return;
                 
-                // Get price - don't filter too aggressively
-                let pricePerNight = 0;
                 const priceEl = card.querySelector('[data-testid="price-and-discounted-price"]');
+                let pricePerNight = 0;
                 if (priceEl) {
                     const priceText = priceEl.innerText.trim();
                     const match = priceText.match(/(\d+(?:\.\d+)?)/);
@@ -44,10 +53,7 @@ const crawler = new PuppeteerCrawler({
                     }
                 }
                 
-                // REMOVED aggressive price filtering
-                // Accept any price between $10 and $2000
-                if (pricePerNight < 10) return;
-                if (pricePerNight > 2000) return;
+                if (pricePerNight < 10 || pricePerNight > 2000) return;
                 
                 const ratingEl = card.querySelector('[data-testid="rating-score"]');
                 const rating = ratingEl ? parseFloat(ratingEl.innerText) : 0;
@@ -63,22 +69,8 @@ const crawler = new PuppeteerCrawler({
             return results;
         });
         
-const proxyConfiguration = await Actor.createProxyConfiguration({
-    groups: ['RESIDENTIAL'],  // Use residential proxies
-    useApifyProxy: true,
-});
-
-const crawler = new PuppeteerCrawler({
-    proxyConfiguration,  // Add this line
-    maxRequestsPerCrawl: 1,
-    // ... rest of your code
-});
         console.log(`✅ Found ${hotels.length} hotels in ${city}`);
-        await Actor.pushData({ 
-            city, 
-            hotels: hotels.slice(0, 30),  // Return up to 30 hotels
-            totalHotels: hotels.length 
-        });
+        await Actor.pushData({ city, hotels, totalHotels: hotels.length });
     }
 });
 
