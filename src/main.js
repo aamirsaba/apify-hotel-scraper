@@ -21,7 +21,10 @@ const proxyConfiguration = await Actor.createProxyConfiguration({
     useApifyProxy: true,
 });
 
-const searchUrl = `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(city)}&checkin=${checkin}&checkout=${checkout}&group_adults=${guests}`;
+// Force USD currency in the URL
+const searchUrl = `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(city)}&checkin=${checkin}&checkout=${checkout}&group_adults=${guests}&selected_currency=USD`;
+
+console.log(`🌐 URL: ${searchUrl}`);
 
 const crawler = new PuppeteerCrawler({
     proxyConfiguration,
@@ -32,54 +35,40 @@ const crawler = new PuppeteerCrawler({
         
         await page.goto(request.url, { waitUntil: 'networkidle2', timeout: 60000 });
         
-        // Wait for results to load
+        // Wait for results
         await page.waitForSelector('[data-testid="property-card"]', { timeout: 30000 });
-        
-        // Take a screenshot to debug
-        await page.screenshot({ path: 'booking-search.png' });
         
         const hotels = await page.evaluate(() => {
             const results = [];
             const cards = document.querySelectorAll('[data-testid="property-card"]');
             
-            // Currency conversion rates
-            const rates = { 'OMR': 2.6, 'AED': 0.272, 'SAR': 0.266, 'USD': 1 };
-            
             cards.forEach((card) => {
-                // Get hotel name
                 const nameEl = card.querySelector('[data-testid="title"]');
                 const name = nameEl ? nameEl.innerText.trim() : '';
                 if (!name) return;
                 
-                // Find the price per night - look for the element with OMR
+                // Find price element
+                const priceEl = card.querySelector('[data-testid="price-and-discounted-price"]');
+                if (!priceEl) return;
+                
+                let priceText = priceEl.innerText.trim();
                 let pricePerNight = 0;
-                let currency = 'USD';
                 
-                // Method 1: Look for OMR price (most accurate)
-                const allText = card.innerText;
-                const omrMatch = allText.match(/OMR\s*(\d+(?:\.\d+)?)/i);
-                if (omrMatch) {
-                    pricePerNight = parseFloat(omrMatch[1]) * 2.6; // Convert OMR to USD
-                    currency = 'USD';
-                    console.log(`Found OMR price: ${omrMatch[1]} OMR = $${pricePerNight}`);
-                }
-                
-                // Method 2: If no OMR found, try price element
-                if (pricePerNight === 0) {
-                    const priceEl = card.querySelector('[data-testid="price-and-discounted-price"]');
-                    if (priceEl) {
-                        const priceText = priceEl.innerText.trim();
-                        const match = priceText.match(/(\d+(?:\.\d+)?)/);
-                        if (match) {
-                            pricePerNight = parseFloat(match[1]);
-                        }
+                // Look for USD pattern
+                const usdMatch = priceText.match(/US\$\s*(\d+(?:\.\d+)?)/);
+                if (usdMatch) {
+                    pricePerNight = parseFloat(usdMatch[1]);
+                } else {
+                    // Just get any number
+                    const match = priceText.match(/(\d+(?:\.\d+)?)/);
+                    if (match) {
+                        pricePerNight = parseFloat(match[1]);
                     }
                 }
                 
-                // Only include hotels with reasonable prices ($30-$500)
+                // Filter reasonable prices ($30-$500 per night)
                 if (pricePerNight < 30 || pricePerNight > 500) return;
                 
-                // Get rating
                 const ratingEl = card.querySelector('[data-testid="rating-score"]');
                 const rating = ratingEl ? parseFloat(ratingEl.innerText) : 0;
                 
@@ -94,7 +83,7 @@ const crawler = new PuppeteerCrawler({
             return results;
         });
         
-        console.log(`✅ Found ${hotels.length} hotels with correct prices`);
+        console.log(`✅ Found ${hotels.length} hotels with USD prices`);
         await Actor.pushData({ 
             city, checkin, checkout, guests, 
             hotels, totalHotels: hotels.length 
