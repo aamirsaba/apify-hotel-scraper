@@ -4,30 +4,16 @@ import { PuppeteerCrawler } from 'crawlee';
 await Actor.init();
 
 const input = await Actor.getInput();
+const city = input?.city || 'Muscat';
+const checkin = input?.checkin || '2026-06-01';
+const checkout = input?.checkout || '2026-06-04';
+const guests = input?.guests || 2;
 
-if (!input?.city) throw new Error('Missing required: city');
-if (!input?.checkin) throw new Error('Missing required: checkin');
-if (!input?.checkout) throw new Error('Missing required: checkout');
-
-const city = input.city;
-const checkin = input.checkin;
-const checkout = input.checkout;
-const guests = input.guests || 2;
+const searchUrl = `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(city)}&checkin=${checkin}&checkout=${checkout}&group_adults=${guests}&selected_currency=USD`;
 
 console.log(`🔍 Searching hotels in ${city}`);
 
-const proxyConfiguration = await Actor.createProxyConfiguration({
-    groups: ['RESIDENTIAL'],
-    useApifyProxy: true,
-});
-
-// Force USD currency in the URL
-const searchUrl = `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(city)}&checkin=${checkin}&checkout=${checkout}&group_adults=${guests}&selected_currency=USD`;
-
-console.log(`🌐 URL: ${searchUrl}`);
-
 const crawler = new PuppeteerCrawler({
-    proxyConfiguration,
     maxRequestsPerCrawl: 1,
     
     requestHandler: async ({ page, request }) => {
@@ -47,27 +33,21 @@ const crawler = new PuppeteerCrawler({
                 const name = nameEl ? nameEl.innerText.trim() : '';
                 if (!name) return;
                 
-                // Find price element
-                const priceEl = card.querySelector('[data-testid="price-and-discounted-price"]');
-                if (!priceEl) return;
-                
-                let priceText = priceEl.innerText.trim();
+                // Get price - don't filter too aggressively
                 let pricePerNight = 0;
-                
-                // Look for USD pattern
-                const usdMatch = priceText.match(/US\$\s*(\d+(?:\.\d+)?)/);
-                if (usdMatch) {
-                    pricePerNight = parseFloat(usdMatch[1]);
-                } else {
-                    // Just get any number
+                const priceEl = card.querySelector('[data-testid="price-and-discounted-price"]');
+                if (priceEl) {
+                    const priceText = priceEl.innerText.trim();
                     const match = priceText.match(/(\d+(?:\.\d+)?)/);
                     if (match) {
                         pricePerNight = parseFloat(match[1]);
                     }
                 }
                 
-                // Filter reasonable prices ($30-$500 per night)
-                if (pricePerNight < 30 || pricePerNight > 500) return;
+                // REMOVED aggressive price filtering
+                // Accept any price between $10 and $2000
+                if (pricePerNight < 10) return;
+                if (pricePerNight > 2000) return;
                 
                 const ratingEl = card.querySelector('[data-testid="rating-score"]');
                 const rating = ratingEl ? parseFloat(ratingEl.innerText) : 0;
@@ -83,10 +63,21 @@ const crawler = new PuppeteerCrawler({
             return results;
         });
         
-        console.log(`✅ Found ${hotels.length} hotels with USD prices`);
+const proxyConfiguration = await Actor.createProxyConfiguration({
+    groups: ['RESIDENTIAL'],  // Use residential proxies
+    useApifyProxy: true,
+});
+
+const crawler = new PuppeteerCrawler({
+    proxyConfiguration,  // Add this line
+    maxRequestsPerCrawl: 1,
+    // ... rest of your code
+});
+        console.log(`✅ Found ${hotels.length} hotels in ${city}`);
         await Actor.pushData({ 
-            city, checkin, checkout, guests, 
-            hotels, totalHotels: hotels.length 
+            city, 
+            hotels: hotels.slice(0, 30),  // Return up to 30 hotels
+            totalHotels: hotels.length 
         });
     }
 });
