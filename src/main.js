@@ -21,18 +21,18 @@ const crawler = new PuppeteerCrawler({
         console.log(`📄 Navigating to Booking.com...`);
         
         // Go to the search page
-        await page.goto(request.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.goto(request.url, { waitUntil: 'networkidle2', timeout: 60000 });
         
         // Accept cookies if the popup appears
         try {
             await page.click('#onetrust-accept-btn-handler');
-            await page.waitForTimeout(1000);
+            await page.waitForTimeout(1000);  // This works in older versions
         } catch (e) {
             console.log('No cookie popup or already accepted');
         }
         
-        // Wait for results to load
-        await page.waitForTimeout(5000);
+        // Use setTimeout instead of waitForTimeout
+        await new Promise(resolve => setTimeout(resolve, 3000));
         
         // Extract hotel data
         const hotels = await page.evaluate(() => {
