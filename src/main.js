@@ -12,7 +12,6 @@ const guests = input?.guests || 2;
 const searchUrl = `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(city)}&checkin=${checkin}&checkout=${checkout}&group_adults=${guests}`;
 
 console.log(`🔍 Searching hotels in ${city}`);
-console.log(`🌐 ${searchUrl}`);
 
 const crawler = new PuppeteerCrawler({
     maxRequestsPerCrawl: 1,
@@ -22,109 +21,69 @@ const crawler = new PuppeteerCrawler({
         
         await page.goto(request.url, { waitUntil: 'networkidle2', timeout: 60000 });
         
-        // Wait for results
-        await page.waitForSelector('[data-testid="property-card"], .sr_property_block, .accommodation-card', { timeout: 30000 });
+        // Wait a bit for dynamic content
+        await new Promise(r => setTimeout(r, 5000));
         
-        // Take a screenshot for debugging (optional)
-        await page.screenshot({ path: 'booking-page.png' });
+        // Get all text content for debugging
+        const pageText = await page.evaluate(() => document.body.innerText);
+        console.log(`📄 Page contains "hotel": ${pageText.toLowerCase().includes('hotel')}`);
+        console.log(`📄 Page contains "booking": ${pageText.toLowerCase().includes('booking')}`);
         
-        // Extract hotel data
+        // Try to find ANY hotel-like elements
         const hotels = await page.evaluate(() => {
             const results = [];
             
-            // Try multiple selectors to find hotel cards
-            const selectors = [
-                '[data-testid="property-card"]',
-                '.sr_property_block',
-                '.accommodation-card',
-                '[data-testid="accommodation-card"]',
-                '.sr_item'
-            ];
+            // Look for ANY div that might contain hotel info
+            const allDivs = document.querySelectorAll('div');
+            const potentialHotels = [];
             
-            let cards = [];
-            for (const selector of selectors) {
-                cards = document.querySelectorAll(selector);
-                if (cards.length > 0) {
-                    console.log(`Found ${cards.length} cards with selector: ${selector}`);
-                    break;
+            for (const div of allDivs) {
+                const text = div.innerText || '';
+                if (text.includes('hotel') || text.includes('Hotel') || text.includes('night')) {
+                    potentialHotels.push(div);
                 }
             }
             
-            cards.forEach((card, index) => {
-                if (index >= 10) return;
+            console.log(`Found ${potentialHotels.length} potential hotel divs`);
+            
+            // Try to extract from the first few
+            for (let i = 0; i < Math.min(10, potentialHotels.length); i++) {
+                const div = potentialHotels[i];
+                const text = div.innerText.substring(0, 500);
                 
-                // Try multiple selectors for hotel name
-                let name = '';
-                const nameSelectors = [
-                    '[data-testid="title"]',
-                    '.sr-hotel__name',
-                    '.hotel_name',
-                    '.accommodation-name'
-                ];
-                for (const sel of nameSelectors) {
-                    const el = card.querySelector(sel);
-                    if (el && el.innerText) {
-                        name = el.innerText.trim();
-                        break;
-                    }
-                }
-                if (!name) return;
+                // Look for price pattern
+                const priceMatch = text.match(/\$?(\d{2,3}(?:\.\d{2})?)/);
+                const price = priceMatch ? parseFloat(priceMatch[1]) : 0;
                 
-                // Try multiple selectors for price
-                let price = 0;
-                const priceSelectors = [
-                    '[data-testid="price-and-discounted-price"]',
-                    '.prco-valign-middle-helper',
-                    '.bui-price-display__value',
-                    '.sr__px',
-                    '.price'
-                ];
-                for (const sel of priceSelectors) {
-                    const el = card.querySelector(sel);
-                    if (el && el.innerText) {
-                        const priceText = el.innerText.trim();
-                        const match = priceText.match(/(\d+(?:\.\d+)?)/);
-                        if (match) {
-                            price = parseFloat(match[1]);
-                            break;
-                        }
-                    }
-                }
+                // Look for hotel name (often all caps or at start of line)
+                const lines = text.split('\n');
+                let name = lines[0]?.substring(0, 100) || 'Unknown Hotel';
                 
-                if (price === 0) {
-                    // Look for any number that looks like a price
-                    const allText = card.innerText;
-                    const matches = allText.match(/\$?(\d{2,3}(?:\.\d{2})?)/g);
-                    if (matches && matches.length > 0) {
-                        price = parseFloat(matches[0].replace('$', ''));
-                    }
-                }
-                
-                if (price > 0) {
+                if (price > 0 && price < 1000) {
                     results.push({
-                        name: name.substring(0, 100),
+                        name: name,
                         pricePerNight: price,
                         currency: 'USD'
                     });
                 }
-            });
+            }
             
             return results;
         });
         
-        console.log(`✅ Found ${hotels.length} hotels in ${city}`);
+        console.log(`✅ Found ${hotels.length} hotels`);
+        
+        // Also save the page HTML for debugging
+        const html = await page.content();
+        await Actor.setValue('debug.html', html);
+        console.log(`💾 Saved page HTML to debug.html`);
         
         await Actor.pushData({
             city: city,
-            checkin: checkin,
-            checkout: checkout,
-            guests: guests,
             totalHotels: hotels.length,
             hotels: hotels,
             timestamp: new Date().toISOString()
         });
-        
-        console.log(`✅ Data pushed to dataset`);
     }
 });
 
