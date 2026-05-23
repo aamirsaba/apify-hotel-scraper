@@ -5,7 +5,7 @@ await Actor.init();
 
 const input = await Actor.getInput();
 
-// Validate required fields - NO HARDCODING
+// Validate required fields
 if (!input?.city) {
     throw new Error('Missing required input: city');
 }
@@ -19,7 +19,7 @@ if (!input?.checkout) {
 const city = input.city;
 const checkin = input.checkin;
 const checkout = input.checkout;
-const guests = input.guests || 2;  // Only guests has a default
+const guests = input.guests || 2;
 
 console.log(`🔍 Searching hotels in ${city} from ${checkin} to ${checkout}`);
 
@@ -49,7 +49,7 @@ const crawler = new PuppeteerCrawler({
                 const name = nameEl ? nameEl.innerText.trim() : '';
                 if (!name) return;
                 
-                // Extract price
+                // Extract price per night
                 let pricePerNight = 0;
                 const priceEl = card.querySelector('[data-testid="price-and-discounted-price"]');
                 if (priceEl) {
@@ -60,6 +60,7 @@ const crawler = new PuppeteerCrawler({
                     }
                 }
                 
+                // Only include hotels with reasonable prices
                 if (pricePerNight < 20) return;
                 
                 const ratingEl = card.querySelector('[data-testid="rating-score"]');
@@ -76,10 +77,19 @@ const crawler = new PuppeteerCrawler({
             return results;
         });
         
-        console.log(`✅ Found ${hotels.length} hotels`);
-        await Actor.pushData({ city, checkin, checkout, guests, hotels, totalHotels: hotels.length });
+        console.log(`✅ Found ${hotels.length} hotels in ${city}`);
+        await Actor.pushData({ 
+            city, 
+            checkin, 
+            checkout, 
+            guests, 
+            hotels, 
+            totalHotels: hotels.length,
+            timestamp: new Date().toISOString()
+        });
     }
 });
 
 await crawler.run([{ url: searchUrl }]);
+console.log('🏁 Crawler finished');
 await Actor.exit();
