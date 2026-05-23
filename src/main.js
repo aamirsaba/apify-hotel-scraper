@@ -18,54 +18,92 @@ const crawler = new PuppeteerCrawler({
     maxRequestsPerCrawl: 1,
     
     requestHandler: async ({ page, request }) => {
-        console.log(`📄 Navigating to Booking.com...`);
+        console.log(`📄 Loading page...`);
         
-        // Go to the search page
         await page.goto(request.url, { waitUntil: 'networkidle2', timeout: 60000 });
         
-        // Accept cookies if the popup appears
-        try {
-            await page.click('#onetrust-accept-btn-handler');
-            await page.waitForTimeout(1000);  // This works in older versions
-        } catch (e) {
-            console.log('No cookie popup or already accepted');
-        }
+        // Wait for results
+        await page.waitForSelector('[data-testid="property-card"], .sr_property_block, .accommodation-card', { timeout: 30000 });
         
-        // Use setTimeout instead of waitForTimeout
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // Take a screenshot for debugging (optional)
+        await page.screenshot({ path: 'booking-page.png' });
         
         // Extract hotel data
         const hotels = await page.evaluate(() => {
             const results = [];
             
-            // Find hotel cards
-            const cards = document.querySelectorAll('[data-testid="property-card"]');
+            // Try multiple selectors to find hotel cards
+            const selectors = [
+                '[data-testid="property-card"]',
+                '.sr_property_block',
+                '.accommodation-card',
+                '[data-testid="accommodation-card"]',
+                '.sr_item'
+            ];
+            
+            let cards = [];
+            for (const selector of selectors) {
+                cards = document.querySelectorAll(selector);
+                if (cards.length > 0) {
+                    console.log(`Found ${cards.length} cards with selector: ${selector}`);
+                    break;
+                }
+            }
             
             cards.forEach((card, index) => {
                 if (index >= 10) return;
                 
-                // Hotel name
-                const nameEl = card.querySelector('[data-testid="title"]');
-                const name = nameEl ? nameEl.innerText.trim() : '';
+                // Try multiple selectors for hotel name
+                let name = '';
+                const nameSelectors = [
+                    '[data-testid="title"]',
+                    '.sr-hotel__name',
+                    '.hotel_name',
+                    '.accommodation-name'
+                ];
+                for (const sel of nameSelectors) {
+                    const el = card.querySelector(sel);
+                    if (el && el.innerText) {
+                        name = el.innerText.trim();
+                        break;
+                    }
+                }
+                if (!name) return;
                 
-                // Price
-                const priceEl = card.querySelector('[data-testid="price-and-discounted-price"]');
+                // Try multiple selectors for price
                 let price = 0;
-                if (priceEl) {
-                    const priceText = priceEl.innerText.trim();
-                    const match = priceText.match(/(\d+(?:\.\d+)?)/);
-                    if (match) price = parseFloat(match[1]);
+                const priceSelectors = [
+                    '[data-testid="price-and-discounted-price"]',
+                    '.prco-valign-middle-helper',
+                    '.bui-price-display__value',
+                    '.sr__px',
+                    '.price'
+                ];
+                for (const sel of priceSelectors) {
+                    const el = card.querySelector(sel);
+                    if (el && el.innerText) {
+                        const priceText = el.innerText.trim();
+                        const match = priceText.match(/(\d+(?:\.\d+)?)/);
+                        if (match) {
+                            price = parseFloat(match[1]);
+                            break;
+                        }
+                    }
                 }
                 
-                // Rating
-                const ratingEl = card.querySelector('[data-testid="rating-score"]');
-                const rating = ratingEl ? parseFloat(ratingEl.innerText) : 0;
+                if (price === 0) {
+                    // Look for any number that looks like a price
+                    const allText = card.innerText;
+                    const matches = allText.match(/\$?(\d{2,3}(?:\.\d{2})?)/g);
+                    if (matches && matches.length > 0) {
+                        price = parseFloat(matches[0].replace('$', ''));
+                    }
+                }
                 
-                if (name && price > 0) {
+                if (price > 0) {
                     results.push({
-                        name: name,
+                        name: name.substring(0, 100),
                         pricePerNight: price,
-                        rating: rating,
                         currency: 'USD'
                     });
                 }
@@ -76,7 +114,6 @@ const crawler = new PuppeteerCrawler({
         
         console.log(`✅ Found ${hotels.length} hotels in ${city}`);
         
-        // Push data to output
         await Actor.pushData({
             city: city,
             checkin: checkin,
@@ -86,11 +123,11 @@ const crawler = new PuppeteerCrawler({
             hotels: hotels,
             timestamp: new Date().toISOString()
         });
+        
+        console.log(`✅ Data pushed to dataset`);
     }
 });
 
-// Run the crawler
 await crawler.run([{ url: searchUrl }]);
-
-console.log('🏁 Crawler finished successfully!');
+console.log('🏁 Crawler finished');
 await Actor.exit();
