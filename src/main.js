@@ -5,7 +5,7 @@ await Actor.init();
 
 // Create proxy configuration with residential proxies
 const proxyConfiguration = await Actor.createProxyConfiguration({
-    groups: ['RESIDENTIAL'],  // Use residential proxies to avoid blocking
+    groups: ['RESIDENTIAL'],
     useApifyProxy: true,
 });
 
@@ -20,7 +20,7 @@ const searchUrl = `https://www.booking.com/searchresults.html?ss=${encodeURIComp
 console.log(`🔍 Searching hotels in ${city}`);
 
 const crawler = new PuppeteerCrawler({
-    proxyConfiguration,  // Add this line - CRITICAL!
+    proxyConfiguration,
     maxRequestsPerCrawl: 1,
     
     requestHandler: async ({ page, request }) => {
@@ -28,40 +28,79 @@ const crawler = new PuppeteerCrawler({
         
         await page.goto(request.url, { waitUntil: 'networkidle2', timeout: 60000 });
         
-        // Random delay to avoid detection
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Wait for results
+        // Wait for results to load
         await page.waitForSelector('[data-testid="property-card"]', { timeout: 30000 });
+        
+        // Scroll down to load more hotels
+        await page.evaluate(async () => {
+            await new Promise((resolve) => {
+                let totalHeight = 0;
+                const distance = 500;
+                const timer = setInterval(() => {
+                    const scrollHeight = document.body.scrollHeight;
+                    window.scrollBy(0, distance);
+                    totalHeight += distance;
+                    if (totalHeight >= scrollHeight || totalHeight > 5000) {
+                        clearInterval(timer);
+                        resolve();
+                    }
+                }, 100);
+            });
+        });
+        
+        // Wait a bit after scrolling
+        await new Promise(resolve => setTimeout(resolve, 2000));
         
         const hotels = await page.evaluate(() => {
             const results = [];
             const cards = document.querySelectorAll('[data-testid="property-card"]');
+            
+            console.log(`Found ${cards.length} hotel cards on page`);
             
             cards.forEach((card) => {
                 const nameEl = card.querySelector('[data-testid="title"]');
                 const name = nameEl ? nameEl.innerText.trim() : '';
                 if (!name) return;
                 
-                const priceEl = card.querySelector('[data-testid="price-and-discounted-price"]');
+                // Try multiple price selectors
                 let pricePerNight = 0;
-                if (priceEl) {
-                    const priceText = priceEl.innerText.trim();
-                    const match = priceText.match(/(\d+(?:\.\d+)?)/);
-                    if (match) {
-                        pricePerNight = parseFloat(match[1]);
+                const priceSelectors = [
+                    '[data-testid="price-and-discounted-price"]',
+                    '[data-testid="total-price"]',
+                    '.prco-valign-middle-helper'
+                ];
+                
+                for (const selector of priceSelectors) {
+                    const priceEl = card.querySelector(selector);
+                    if (priceEl) {
+                        const priceText = priceEl.innerText.trim();
+                        const match = priceText.match(/(\d+(?:\.\d+)?)/);
+                        if (match) {
+                            pricePerNight = parseFloat(match[1]);
+                            break;
+                        }
                     }
                 }
                 
-                if (pricePerNight < 10 || pricePerNight > 2000) return;
+                // Accept wider price range
+                if (pricePerNight < 20 || pricePerNight > 5000) return;
                 
+                // Get rating
                 const ratingEl = card.querySelector('[data-testid="rating-score"]');
                 const rating = ratingEl ? parseFloat(ratingEl.innerText) : 0;
+                
+                // Get star rating
+                let stars = 0;
+                const starsEl = card.querySelector('[data-testid="rating-stars"]');
+                if (starsEl) {
+                    stars = (starsEl.innerText.match(/★/g) || []).length;
+                }
                 
                 results.push({
                     name: name.substring(0, 100),
                     pricePerNight: Math.round(pricePerNight),
                     rating: rating,
+                    stars: stars,
                     currency: 'USD'
                 });
             });
@@ -70,9 +109,20 @@ const crawler = new PuppeteerCrawler({
         });
         
         console.log(`✅ Found ${hotels.length} hotels in ${city}`);
-        await Actor.pushData({ city, hotels, totalHotels: hotels.length });
+        console.log(`📊 Hotel names: ${hotels.map(h => h.name).join(', ')}`);
+        
+        await Actor.pushData({ 
+            city, 
+            checkin,
+            checkout,
+            guests,
+            hotels: hotels,
+            totalHotels: hotels.length,
+            timestamp: new Date().toISOString()
+        });
     }
 });
 
 await crawler.run([{ url: searchUrl }]);
+console.log('🏁 Crawler finished');
 await Actor.exit();
