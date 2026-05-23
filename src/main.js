@@ -1,4 +1,5 @@
 import { Actor } from 'apify';
+import { PuppeteerCrawler } from 'crawlee';
 
 await Actor.init();
 
@@ -16,29 +17,23 @@ console.log(`📅 ${checkin} to ${checkout}, ${guests} guests`);
 const searchUrl = `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(city)}&checkin=${checkin}&checkout=${checkout}&group_adults=${guests}`;
 console.log(`🌐 ${searchUrl}`);
 
-// Use Apify's PuppeteerCrawler
-const crawler = new Actor.PuppeteerCrawler({
+// Create crawler
+const crawler = new PuppeteerCrawler({
     requestHandler: async ({ page, request }) => {
         console.log(`📄 Loading page...`);
         
-        // Navigate to the page
         await page.goto(request.url, { waitUntil: 'networkidle2', timeout: 60000 });
-        
-        // Wait for hotel cards to appear
         await page.waitForSelector('[data-testid="property-card"]', { timeout: 30000 });
         
-        // Extract hotel data
         const hotels = await page.evaluate(() => {
             const results = [];
             const cards = document.querySelectorAll('[data-testid="property-card"]');
             
             for (const card of cards) {
-                // Hotel name
                 const nameElement = card.querySelector('[data-testid="title"]');
                 const name = nameElement?.innerText?.trim();
                 if (!name) continue;
                 
-                // Price
                 const priceElement = card.querySelector('[data-testid="price-and-discounted-price"]');
                 let price = 0;
                 if (priceElement) {
@@ -48,18 +43,15 @@ const crawler = new Actor.PuppeteerCrawler({
                 }
                 if (price === 0) continue;
                 
-                // Rating
                 const ratingElement = card.querySelector('[data-testid="rating-score"]');
                 const rating = ratingElement ? parseFloat(ratingElement.innerText) : 0;
                 
-                // Hotel URL
                 const linkElement = card.querySelector('a[data-testid="property-card-link"]');
                 let hotelUrl = linkElement?.getAttribute('href') || '';
                 if (hotelUrl && !hotelUrl.startsWith('http')) {
                     hotelUrl = `https://www.booking.com${hotelUrl}`;
                 }
                 
-                // Star rating
                 const starsElement = card.querySelector('[data-testid="rating-stars"]');
                 let stars = 0;
                 if (starsElement) {
@@ -75,7 +67,6 @@ const crawler = new Actor.PuppeteerCrawler({
                     currency: 'USD'
                 });
                 
-                // Limit to 20 hotels
                 if (results.length >= 20) break;
             }
             
@@ -84,7 +75,6 @@ const crawler = new Actor.PuppeteerCrawler({
         
         console.log(`✅ Found ${hotels.length} hotels in ${city}`);
         
-        // Save results
         await Actor.pushData({
             city: city,
             checkin: checkin,
@@ -99,9 +89,8 @@ const crawler = new Actor.PuppeteerCrawler({
     maxRequestsPerCrawl: 1,
 });
 
-// Start the crawler
 await crawler.run([{ url: searchUrl }]);
 
-console.log('🏁 Crawler finished successfully');
+console.log('🏁 Crawler finished');
 
 await Actor.exit();
