@@ -89,7 +89,7 @@ const crawler = new PuppeteerCrawler({
                 const ratingEl = card.querySelector('[data-testid="rating-score"]');
                 const rating = ratingEl ? parseFloat(ratingEl.innerText) : 0;
                 
-                // Get star rating
+                // Get star rating - CORRECTED (no duplicate)
                 let stars = 0;
                 const starsEl = card.querySelector('[data-testid="rating-stars"]');
                 if (starsEl) {
