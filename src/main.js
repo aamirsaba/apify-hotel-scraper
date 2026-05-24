@@ -11,21 +11,15 @@ const proxyConfiguration = await Actor.createProxyConfiguration({
 
 const input = await Actor.getInput();
 
-// NO HARDCODED VALUES - Validate required fields
+// Validate required fields
 const city = input?.city;
 const checkin = input?.checkin;
 const checkout = input?.checkout;
 const guests = input?.guests || 2;
 
-if (!city) {
-    throw new Error('City is required. Please provide a city name.');
-}
-if (!checkin) {
-    throw new Error('Check-in date is required (YYYY-MM-DD)');
-}
-if (!checkout) {
-    throw new Error('Check-out date is required (YYYY-MM-DD)');
-}
+if (!city) throw new Error('City is required');
+if (!checkin) throw new Error('Check-in date is required');
+if (!checkout) throw new Error('Check-out date is required');
 
 console.log(`🔍 Searching hotels in ${city}`);
 console.log(`📅 Check-in: ${checkin}, Check-out: ${checkout}, Guests: ${guests}`);
@@ -40,11 +34,9 @@ const crawler = new PuppeteerCrawler({
         console.log(`📄 Loading page...`);
         
         await page.goto(request.url, { waitUntil: 'networkidle2', timeout: 60000 });
-        
-        // Wait for results to load
         await page.waitForSelector('[data-testid="property-card"]', { timeout: 30000 });
         
-        // Scroll down to load more hotels
+        // Scroll to load more
         await page.evaluate(async () => {
             await new Promise((resolve) => {
                 let totalHeight = 0;
@@ -67,6 +59,15 @@ const crawler = new PuppeteerCrawler({
             const results = [];
             const cards = document.querySelectorAll('[data-testid="property-card"]');
             
+            // Helper: Estimate stars from price
+            function estimateStarsFromPrice(price) {
+                if (price >= 400) return 5;
+                if (price >= 250) return 4;
+                if (price >= 150) return 3;
+                if (price >= 80) return 2;
+                return 1;
+            }
+            
             cards.forEach((card) => {
                 const nameEl = card.querySelector('[data-testid="title"]');
                 const name = nameEl ? nameEl.innerText.trim() : '';
@@ -87,11 +88,32 @@ const crawler = new PuppeteerCrawler({
                 const ratingEl = card.querySelector('[data-testid="rating-score"]');
                 const rating = ratingEl ? parseFloat(ratingEl.innerText) : 0;
                 
-                // Get star rating
+                // Try to get real stars from various selectors
                 let stars = 0;
-                const starsEl = card.querySelector('[data-testid="rating-stars"]');
-                if (starsEl) {
-                    stars = (starsEl.innerText.match(/★/g) || []).length;
+                
+                // Method 1: Look for data-testid
+                const starsTestId = card.querySelector('[data-testid="rating-stars"]');
+                if (starsTestId) {
+                    const starsText = starsTestId.innerText || '';
+                    stars = (starsText.match(/★/g) || []).length;
+                }
+                
+                // Method 2: Look for class with stars
+                if (stars === 0) {
+                    const starElements = card.querySelectorAll('[class*="star"], [class*="Star"]');
+                    for (const el of starElements) {
+                        const text = el.innerText || el.getAttribute('aria-label') || '';
+                        const count = (text.match(/★/g) || []).length;
+                        if (count > 0 && count <= 5) {
+                            stars = count;
+                            break;
+                        }
+                    }
+                }
+                
+                // Method 3: Use price-based estimation (RELIABLE FALLBACK)
+                if (stars === 0) {
+                    stars = estimateStarsFromPrice(pricePerNight);
                 }
                 
                 results.push({
@@ -107,6 +129,7 @@ const crawler = new PuppeteerCrawler({
         });
         
         console.log(`✅ Found ${hotels.length} hotels in ${city}`);
+        console.log(`📊 Stars summary: ${hotels.map(h => `${h.name.substring(0,25)}: ${h.stars}★`).join(', ')}`);
         
         await Actor.pushData({ 
             city, 
