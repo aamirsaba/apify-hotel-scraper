@@ -10,14 +10,27 @@ const proxyConfiguration = await Actor.createProxyConfiguration({
 });
 
 const input = await Actor.getInput();
-const city = input?.city || 'Muscat';
-const checkin = input?.checkin || '2026-06-01';
-const checkout = input?.checkout || '2026-06-04';
+
+// NO HARDCODED VALUES - Validate required fields
+const city = input?.city;
+const checkin = input?.checkin;
+const checkout = input?.checkout;
 const guests = input?.guests || 2;
 
-const searchUrl = `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(city)}&checkin=${checkin}&checkout=${checkout}&group_adults=${guests}&selected_currency=USD`;
+if (!city) {
+    throw new Error('City is required. Please provide a city name.');
+}
+if (!checkin) {
+    throw new Error('Check-in date is required (YYYY-MM-DD)');
+}
+if (!checkout) {
+    throw new Error('Check-out date is required (YYYY-MM-DD)');
+}
 
 console.log(`🔍 Searching hotels in ${city}`);
+console.log(`📅 Check-in: ${checkin}, Check-out: ${checkout}, Guests: ${guests}`);
+
+const searchUrl = `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(city)}&checkin=${checkin}&checkout=${checkout}&group_adults=${guests}&selected_currency=USD`;
 
 const crawler = new PuppeteerCrawler({
     proxyConfiguration,
@@ -48,48 +61,33 @@ const crawler = new PuppeteerCrawler({
             });
         });
         
-        // Wait a bit after scrolling
         await new Promise(resolve => setTimeout(resolve, 2000));
         
         const hotels = await page.evaluate(() => {
             const results = [];
             const cards = document.querySelectorAll('[data-testid="property-card"]');
             
-            console.log(`Found ${cards.length} hotel cards on page`);
-            
             cards.forEach((card) => {
                 const nameEl = card.querySelector('[data-testid="title"]');
                 const name = nameEl ? nameEl.innerText.trim() : '';
                 if (!name) return;
                 
-                // Try multiple price selectors
+                // Get price
                 let pricePerNight = 0;
-                const priceSelectors = [
-                    '[data-testid="price-and-discounted-price"]',
-                    '[data-testid="total-price"]',
-                    '.prco-valign-middle-helper'
-                ];
-                
-                for (const selector of priceSelectors) {
-                    const priceEl = card.querySelector(selector);
-                    if (priceEl) {
-                        const priceText = priceEl.innerText.trim();
-                        const match = priceText.match(/(\d+(?:\.\d+)?)/);
-                        if (match) {
-                            pricePerNight = parseFloat(match[1]);
-                            break;
-                        }
-                    }
+                const priceEl = card.querySelector('[data-testid="price-and-discounted-price"]');
+                if (priceEl) {
+                    const priceText = priceEl.innerText.trim();
+                    const match = priceText.match(/(\d+(?:\.\d+)?)/);
+                    if (match) pricePerNight = parseFloat(match[1]);
                 }
                 
-                // Accept wider price range
                 if (pricePerNight < 20 || pricePerNight > 5000) return;
                 
                 // Get rating
                 const ratingEl = card.querySelector('[data-testid="rating-score"]');
                 const rating = ratingEl ? parseFloat(ratingEl.innerText) : 0;
                 
-                // Get star rating - CORRECTED (no duplicate)
+                // Get star rating
                 let stars = 0;
                 const starsEl = card.querySelector('[data-testid="rating-stars"]');
                 if (starsEl) {
@@ -109,7 +107,6 @@ const crawler = new PuppeteerCrawler({
         });
         
         console.log(`✅ Found ${hotels.length} hotels in ${city}`);
-        console.log(`📊 Hotel names: ${hotels.map(h => h.name).join(', ')}`);
         
         await Actor.pushData({ 
             city, 
